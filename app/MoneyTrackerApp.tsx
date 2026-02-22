@@ -503,19 +503,24 @@ const MoneyTrackerApp: React.FC<MoneyTrackerAppProps> = ({ userId }) => {
     load();
   }, [userId]);
 
-  // save state to Firestore whenever it changes
-  useEffect(() => {
-    if (!loadedFromDb) return;
-    const save = async () => {
-      try {
-        const ref = doc(db, "users", userId, "app", STORAGE_DOC_ID);
-        await setDoc(ref, state);
-      } catch (e) {
-        console.error("Error saving state to Firestore", e);
-      }
-    };
-    save();
-  }, [state, userId, loadedFromDb]);
+// save state to Firestore whenever it changes
+useEffect(() => {
+  if (!loadedFromDb) return;
+  const save = async () => {
+    try {
+      const ref = doc(db, "users", userId, "app", STORAGE_DOC_ID);
+
+      // Firestore does not allow undefined values.
+      // This strips out undefined fields from nested objects/arrays.
+      const cleanedState = JSON.parse(JSON.stringify(state));
+
+      await setDoc(ref, cleanedState);
+    } catch (e) {
+      console.error("Error saving state to Firestore", e);
+    }
+  };
+  save();
+}, [state, userId, loadedFromDb]);
 
   // handlers
   const addPerson = () => {
