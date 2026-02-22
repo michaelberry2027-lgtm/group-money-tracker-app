@@ -1,4 +1,3 @@
-
 "use client";
 
 import React, { useEffect, useState } from "react";
@@ -15,6 +14,8 @@ type Item = {
   description: string;
   priceCents: number;
   participantIds: string[];
+  // raw string the user types so decimals like "3.", "3.5" work naturally
+  priceInput?: string;
 };
 
 type PurchaseStatus = "open" | "settled";
@@ -62,7 +63,9 @@ function formatCurrency(cents: number): string {
 }
 
 function parseMoneyToCents(value: string): number {
-  const n = parseFloat(value.replace(/[^0-9.]/g, ""));
+  if (!value) return 0;
+  const clean = value.replace(/[^0-9.]/g, "");
+  const n = parseFloat(clean);
   if (isNaN(n)) return 0;
   return Math.round(n * 100);
 }
@@ -74,11 +77,7 @@ function generateId(): string {
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
-// --- helpers to compute who owes what ---
-
-function getPurchaseBreakdown(
-  purchase: Purchase
-): Record<string, number> {
+function getPurchaseBreakdown(purchase: Purchase): Record<string, number> {
   const result: Record<string, number> = {};
 
   const participantsSet = new Set<string>();
@@ -147,8 +146,6 @@ function getTotalPaidByPerson(
   });
   return totals;
 }
-
-// --- person statement modal ---
 
 type PersonStatementModalProps = {
   person: Person;
@@ -295,7 +292,6 @@ const PersonStatementModal: React.FC<PersonStatementModalProps> = ({
           </button>
         </div>
 
-        {/* summary */}
         <div className="grid grid-cols-3 gap-3 text-sm mb-4">
           <div className="border rounded-md p-2">
             <div className="text-xs text-slate-500">
@@ -329,7 +325,6 @@ const PersonStatementModal: React.FC<PersonStatementModalProps> = ({
           </div>
         </div>
 
-        {/* charges */}
         <div className="mb-4">
           <h4 className="text-sm font-semibold mb-1">
             Charges (purchases they’re in)
@@ -376,7 +371,6 @@ const PersonStatementModal: React.FC<PersonStatementModalProps> = ({
           )}
         </div>
 
-        {/* payments */}
         <div className="mb-4">
           <h4 className="text-sm font-semibold mb-1">Payments</h4>
           {personPayments.length === 0 ? (
@@ -423,7 +417,6 @@ const PersonStatementModal: React.FC<PersonStatementModalProps> = ({
           )}
         </div>
 
-        {/* footer actions */}
         <div className="flex justify-between gap-2 mt-4">
           <button
             onClick={exportCSV}
@@ -443,13 +436,10 @@ const PersonStatementModal: React.FC<PersonStatementModalProps> = ({
   );
 };
 
-// --- main app ---
-
 const MoneyTrackerApp: React.FC<MoneyTrackerAppProps> = ({ userId }) => {
   const [state, setState] = useState<AppState>(EMPTY_STATE);
   const [loadedFromDb, setLoadedFromDb] = useState(false);
 
-  // form state
   const [newPersonName, setNewPersonName] = useState("");
 
   const [purchaseTitle, setPurchaseTitle] = useState("");
@@ -472,7 +462,6 @@ const MoneyTrackerApp: React.FC<MoneyTrackerAppProps> = ({ userId }) => {
     null
   );
 
-  // load state from Firestore
   useEffect(() => {
     const load = async () => {
       try {
@@ -503,26 +492,20 @@ const MoneyTrackerApp: React.FC<MoneyTrackerAppProps> = ({ userId }) => {
     load();
   }, [userId]);
 
-// save state to Firestore whenever it changes
-useEffect(() => {
-  if (!loadedFromDb) return;
-  const save = async () => {
-    try {
-      const ref = doc(db, "users", userId, "app", STORAGE_DOC_ID);
+  useEffect(() => {
+    if (!loadedFromDb) return;
+    const save = async () => {
+      try {
+        const ref = doc(db, "users", userId, "app", STORAGE_DOC_ID);
+        const cleanedState = JSON.parse(JSON.stringify(state));
+        await setDoc(ref, cleanedState);
+      } catch (e) {
+        console.error("Error saving state to Firestore", e);
+      }
+    };
+    save();
+  }, [state, userId, loadedFromDb]);
 
-      // Firestore does not allow undefined values.
-      // This strips out undefined fields from nested objects/arrays.
-      const cleanedState = JSON.parse(JSON.stringify(state));
-
-      await setDoc(ref, cleanedState);
-    } catch (e) {
-      console.error("Error saving state to Firestore", e);
-    }
-  };
-  save();
-}, [state, userId, loadedFromDb]);
-
-  // handlers
   const addPerson = () => {
     const name = newPersonName.trim();
     if (!name) return;
@@ -540,6 +523,7 @@ useEffect(() => {
       description: "",
       priceCents: 0,
       participantIds: [],
+      priceInput: "",
     };
     setItems((prev) => [...prev, newItem]);
   };
@@ -597,9 +581,11 @@ useEffect(() => {
       return;
     }
 
-    const cleanedItems = items.map((item) => ({
-      ...item,
-      description: item.description.trim() || "Item",
+    const cleanedItems: Item[] = items.map((item) => ({
+      id: item.id,
+      description: (item.description || "").trim() || "Item",
+      priceCents: parseMoneyToCents(item.priceInput || ""),
+      participantIds: item.participantIds,
     }));
 
     const purchase: Purchase = {
@@ -632,10 +618,7 @@ useEffect(() => {
       ...prev,
       purchases: prev.purchases.map((p) =>
         p.id === purchaseId
-          ? {
-              ...p,
-              status: p.status === "open" ? "settled" : "open",
-            }
+          ? { ...p, status: p.status === "open" ? "settled" : "open" }
           : p
       ),
     }));
@@ -876,14 +859,10 @@ useEffect(() => {
                       </label>
                       <input
                         type="text"
-                        value={
-                          item.priceCents
-                            ? (item.priceCents / 100).toString()
-                            : ""
-                        }
+                        value={item.priceInput ?? ""}
                         onChange={(e) =>
                           updateItem(item.id, {
-                            priceCents: parseMoneyToCents(e.target.value),
+                            priceInput: e.target.value,
                           })
                         }
                         placeholder="5.99"
@@ -1296,7 +1275,6 @@ useEffect(() => {
         </section>
       </div>
 
-      {/* person statement modal */}
       {selectedPerson && (
         <PersonStatementModal
           person={selectedPerson}
@@ -1310,4 +1288,3 @@ useEffect(() => {
 };
 
 export default MoneyTrackerApp;
-
